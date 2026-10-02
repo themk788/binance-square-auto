@@ -1,0 +1,136 @@
+name: Binance Square Auto Post
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 09:00 AM to 08:00 PM IST, every hour
+    # GitHub uses UTC, so 03:30-14:30 UTC = 09:00-20:00 IST
+    - cron: "30 3-14 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  post-to-square:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate and publish post
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_API_KEY }}
+        run: |
+          cat > /tmp/post.mjs <<'EOF'
+          const geminiKey = process.env.GEMINI_API_KEY;
+          const binanceKey = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+
+          if (!geminiKey) throw new Error("GEMINI_API_KEY is missing");
+          if (!binanceKey) throw new Error("BINANCE_SQUARE_API_KEY is missing");
+
+          const now = new Date().toISOString();
+
+          const prompt = `
+          Create ONE original Binance Square crypto post.
+
+          Current automation timestamp: ${now}
+
+          Requirements:
+          - Write in natural, human-sounding English.
+          - 500 characters maximum.
+          - Choose a useful crypto topic yourself.
+          - Topics can include crypto education, blockchain concepts,
+            market psychology, risk management, trading mistakes,
+            DeFi concepts, or a well-known crypto asset.
+          - Do NOT claim live prices, breaking news, current market moves,
+            or specific statistics unless they are provided in the prompt.
+          - Do NOT give personalized financial advice.
+          - Do NOT promise profits.
+          - Do NOT use clickbait.
+          - Make this post substantially different from previous posts.
+          - You may use 2-4 relevant hashtags.
+          - Return ONLY the final post text. No quotation marks,
+            no explanation, and no heading.
+          `;
+
+          // Generate with Gemini.
+          const geminiResponse = await fetch(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": geminiKey
+              },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    parts: [{ text: prompt }]
+                  }
+                ],
+                generationConfig: {
+                  temperature: 0.9,
+                  maxOutputTokens: 300
+                }
+              })
+            }
+          );
+
+          const geminiData = await geminiResponse.json();
+
+          if (!geminiResponse.ok) {
+            throw new Error(
+              `Gemini HTTP ${geminiResponse.status}: ${JSON.stringify(geminiData)}`
+            );
+          }
+
+          const post =
+            geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+          if (!post) {
+            throw new Error("Gemini returned an empty post");
+          }
+
+          console.log("Generated post:");
+          console.log(post);
+
+          // Publish to Binance Square.
+          const binanceResponse = await fetch(
+            "https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "clienttype": "binanceSkill",
+                "X-Square-OpenAPI-Key": binanceKey
+              },
+              body: JSON.stringify({
+                bodyTextOnly: post
+              })
+            }
+          );
+
+          const binanceData = await binanceResponse.json();
+
+          if (!binanceResponse.ok) {
+            throw new Error(
+              `Binance HTTP ${binanceResponse.status}: ${JSON.stringify(binanceData)}`
+            );
+          }
+
+          if (binanceData?.code !== "000000") {
+            throw new Error(
+              `Binance API error ${binanceData?.code}: ${binanceData?.message || "Unknown error"}`
+            );
+          }
+
+          const id = binanceData?.data?.id;
+
+          console.log("SUCCESS: Binance Square post published.");
+
+          if (id) {
+            console.log(`Post ID: ${id}`);
+            console.log(`Post URL: https://www.binance.com/square/post/${id}`);
+          }
+          EOF
+
+          node /tmp/post.mjs
