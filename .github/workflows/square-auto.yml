@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   post-to-square:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Generate and publish post
@@ -24,8 +24,13 @@ jobs:
           const geminiKey = process.env.GEMINI_API_KEY;
           const binanceKey = process.env.BINANCE_SQUARE_OPENAPI_KEY;
 
-          if (!geminiKey) throw new Error("GEMINI_API_KEY is missing");
-          if (!binanceKey) throw new Error("BINANCE_SQUARE_API_KEY is missing");
+          if (!geminiKey) {
+            throw new Error("GEMINI_API_KEY is missing");
+          }
+
+          if (!binanceKey) {
+            throw new Error("BINANCE_SQUARE_API_KEY is missing");
+          }
 
           const now = new Date().toISOString();
 
@@ -36,7 +41,7 @@ jobs:
 
           Requirements:
           - Write in natural, human-sounding English.
-          - 500 characters maximum.
+          - Maximum 500 characters.
           - Choose a useful crypto topic yourself.
           - Topics can include crypto education, blockchain concepts,
             market psychology, risk management, trading mistakes,
@@ -46,82 +51,130 @@ jobs:
           - Do NOT give personalized financial advice.
           - Do NOT promise profits.
           - Do NOT use clickbait.
-          - Make this post substantially different from previous posts.
+          - Make every post substantially different.
           - You may use 2-4 relevant hashtags.
-          - Return ONLY the final post text. No quotation marks,
-            no explanation, and no heading.
+          - Return ONLY the final post text.
+          - No quotation marks.
+          - No explanation.
+          - No heading.
           `;
 
-          // Generate with Gemini.
-          const geminiResponse = await fetch(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "x-goog-api-key": geminiKey
-              },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    parts: [{ text: prompt }]
+          async function generatePost() {
+            const url =
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
+
+            let lastError;
+
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                const response = await fetch(url, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": geminiKey
+                  },
+                  body: JSON.stringify({
+                    contents: [
+                      {
+                        parts: [{ text: prompt }]
+                      }
+                    ],
+                    generationConfig: {
+                      temperature: 0.9,
+                      maxOutputTokens: 300
+                    }
+                  })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                  const post =
+                    data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+                  if (!post) {
+                    throw new Error("Gemini returned an empty post");
                   }
-                ],
-                generationConfig: {
-                  temperature: 0.9,
-                  maxOutputTokens: 300
+
+                  return post;
                 }
-              })
+
+                lastError = new Error(
+                  `Gemini HTTP ${response.status}: ${JSON.stringify(data)}`
+                );
+
+                if (response.status < 500 && response.status !== 429) {
+                  throw lastError;
+                }
+              } catch (error) {
+                lastError = error;
+              }
+
+              console.log(`Gemini attempt ${attempt} failed. Retrying...`);
+              await new Promise(resolve =>
+                setTimeout(resolve, attempt * 3000)
+              );
             }
-          );
 
-          const geminiData = await geminiResponse.json();
-
-          if (!geminiResponse.ok) {
-            throw new Error(
-              `Gemini HTTP ${geminiResponse.status}: ${JSON.stringify(geminiData)}`
-            );
+            throw lastError;
           }
 
-          const post =
-            geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          async function publishToBinance(post) {
+            const url =
+              "https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add";
 
-          if (!post) {
-            throw new Error("Gemini returned an empty post");
+            let lastError;
+
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                const response = await fetch(url, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "clienttype": "binanceSkill",
+                    "X-Square-OpenAPI-Key": binanceKey
+                  },
+                  body: JSON.stringify({
+                    bodyTextOnly: post
+                  })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data?.code === "000000") {
+                  return data;
+                }
+
+                lastError = new Error(
+                  `Binance API error HTTP ${response.status}: ${JSON.stringify(data)}`
+                );
+
+                if (response.status < 500 && response.status !== 429) {
+                  throw lastError;
+                }
+              } catch (error) {
+                lastError = error;
+              }
+
+              console.log(`Binance attempt ${attempt} failed. Retrying...`);
+              await new Promise(resolve =>
+                setTimeout(resolve, attempt * 3000)
+              );
+            }
+
+            throw lastError;
           }
+
+          console.log("Generating Binance Square post...");
+
+          const post = await generatePost();
 
           console.log("Generated post:");
           console.log(post);
 
-          // Publish to Binance Square.
-          const binanceResponse = await fetch(
-            "https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "clienttype": "binanceSkill",
-                "X-Square-OpenAPI-Key": binanceKey
-              },
-              body: JSON.stringify({
-                bodyTextOnly: post
-              })
-            }
-          );
+          console.log("Publishing to Binance Square...");
 
-          const binanceData = await binanceResponse.json();
-
-          if (!binanceResponse.ok) {
-            throw new Error(
-              `Binance HTTP ${binanceResponse.status}: ${JSON.stringify(binanceData)}`
-            );
-          }
-
-          if (binanceData?.code !== "000000") {
-            throw new Error(
-              `Binance API error ${binanceData?.code}: ${binanceData?.message || "Unknown error"}`
-            );
-          }
+          const binanceData = await publishToBinance(post);
 
           const id = binanceData?.data?.id;
 
@@ -129,7 +182,9 @@ jobs:
 
           if (id) {
             console.log(`Post ID: ${id}`);
-            console.log(`Post URL: https://www.binance.com/square/post/${id}`);
+            console.log(
+              `Post URL: https://www.binance.com/square/post/${id}`
+            );
           }
           EOF
 
