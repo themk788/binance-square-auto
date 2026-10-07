@@ -2,9 +2,12 @@ name: Binance Square Auto Post
 
 on:
   workflow_dispatch:
+
   schedule:
-    # 09:00 AM to 08:00 PM IST, every hour
-    # GitHub uses UTC, so 03:30-14:30 UTC = 09:00-20:00 IST
+    # 09:00 AM to 08:00 PM IST
+    # GitHub uses UTC
+    # 03:30 UTC = 09:00 IST
+    # 14:30 UTC = 20:00 IST
     - cron: "30 3-14 * * *"
 
 permissions:
@@ -15,177 +18,303 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Generate and publish post
+      - name: Generate and Publish Binance Square Post
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BINANCE_SQUARE_OPENAPI_KEY: ${{ secrets.BINANCE_SQUARE_API_KEY }}
         run: |
-          cat > /tmp/post.mjs <<'EOF'
-          const geminiKey = process.env.GEMINI_API_KEY;
-          const binanceKey = process.env.BINANCE_SQUARE_OPENAPI_KEY;
+          set -e
 
-          if (!geminiKey) {
-            throw new Error("GEMINI_API_KEY is missing");
-          }
+          echo "🚀 Starting Binance Square post..."
 
-          if (!binanceKey) {
-            throw new Error("BINANCE_SQUARE_API_KEY is missing");
-          }
+          # --------------------------------------------------
+          # Choose a primary token for this post
+          # --------------------------------------------------
 
-          const now = new Date().toISOString();
+          TOKENS=(
+            "BTC"
+            "ETH"
+            "BNB"
+            "SOL"
+            "XRP"
+            "SUI"
+            "ADA"
+            "DOGE"
+            "AVAX"
+            "LINK"
+            "TON"
+            "NEAR"
+          )
 
-          const prompt = `
-          Create ONE original Binance Square crypto post.
+          INDEX=$(( $(date +%s) / 3600 % ${#TOKENS[@]} ))
+          PRIMARY_TOKEN="${TOKENS[$INDEX]}"
 
-          Current automation timestamp: ${now}
+          echo "🎯 Primary token: $PRIMARY_TOKEN"
 
-          Requirements:
-          - Write in natural, human-sounding English.
-          - Maximum 500 characters.
-          - Choose a useful crypto topic yourself.
-          - Topics can include crypto education, blockchain concepts,
-            market psychology, risk management, trading mistakes,
-            DeFi concepts, or a well-known crypto asset.
-          - Do NOT claim live prices, breaking news, current market moves,
-            or specific statistics unless they are provided in the prompt.
-          - Do NOT give personalized financial advice.
-          - Do NOT promise profits.
-          - Do NOT use clickbait.
-          - Make every post substantially different.
-          - You may use 2-4 relevant hashtags.
-          - Return ONLY the final post text.
-          - No quotation marks.
-          - No explanation.
-          - No heading.
-          `;
+          # --------------------------------------------------
+          # Choose a content style
+          # --------------------------------------------------
 
-          async function generatePost() {
-            const url =
-              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
+          STYLES=(
+            "breaking-style market hook"
+            "bullish vs bearish debate"
+            "short technical-analysis style"
+            "contrarian crypto opinion"
+            "trader psychology"
+            "watchlist setup"
+            "market sentiment"
+            "educational but punchy"
+            "high-engagement community question"
+            "meme-style crypto observation"
+            "risk-management insight"
+            "hot take"
+          )
 
-            let lastError;
+          STYLE_INDEX=$(( $(date +%s) / 3600 % ${#STYLES[@]} ))
+          STYLE="${STYLES[$STYLE_INDEX]}"
 
-            for (let attempt = 1; attempt <= 3; attempt++) {
-              try {
-                const response = await fetch(url, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": geminiKey
-                  },
-                  body: JSON.stringify({
-                    contents: [
-                      {
-                        parts: [{ text: prompt }]
-                      }
-                    ],
-                    generationConfig: {
-                      temperature: 0.9,
-                      maxOutputTokens: 300
-                    }
-                  })
-                });
+          echo "📝 Style: $STYLE"
 
-                const data = await response.json();
+          # --------------------------------------------------
+          # Generate post with Gemini
+          # --------------------------------------------------
 
-                if (response.ok) {
-                  const post =
-                    data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          PROMPT=$(cat <<EOF
+You are an experienced Binance Square crypto creator.
 
-                  if (!post) {
-                    throw new Error("Gemini returned an empty post");
-                  }
+Create ONE original Binance Square post about the crypto market.
 
-                  return post;
+PRIMARY TOKEN:
+$PRIMARY_TOKEN
+
+CONTENT STYLE:
+$STYLE
+
+IMPORTANT GOAL:
+The post should feel like a real Binance Square creator wrote it, NOT like an AI-generated generic educational article.
+
+STYLE TO FOLLOW:
+
+- Start with a very strong hook.
+- Make the first 1-2 lines attention-grabbing.
+- Use a confident, natural crypto-community tone.
+- Keep the post easy to read on a phone.
+- Use short paragraphs.
+- You may use emojis, but don't overuse them.
+- Create curiosity so people want to read the full post.
+- End with a question or opinion prompt that encourages genuine discussion.
+- Make the content useful, interesting, or insightful.
+- The post can be slightly provocative/contrarian, but never misleading.
+- It should resemble high-engagement Binance Square posts.
+- Do NOT sound like a textbook.
+- Do NOT start with "In today's rapidly evolving crypto market".
+- Do NOT use boring generic introductions.
+
+CASHTAG RULES:
+
+- The PRIMARY TOKEN must ALWAYS be written as a Binance cashtag:
+  \$$PRIMARY_TOKEN
+- If another coin is mentioned, it MUST also use a $ cashtag.
+  Example: $BTC, $ETH, $SOL
+- Never write BTC, ETH, SOL etc. without the $ sign.
+- Use no more than 3 different coin cashtags in the entire post.
+- Prefer 1-2 cashtags unless a third one is genuinely useful.
+- Never stuff cashtags just for monetization.
+
+CONTENT RULES:
+
+- Do not invent breaking news.
+- Do not claim a price will definitely rise or fall.
+- Do not promise profits.
+- Do not give fake exact price targets.
+- Do not pretend to have live market data.
+- If discussing a possible move, clearly frame it as a scenario.
+- Do not copy any existing post.
+- Do not repeat the same wording every time.
+- Avoid obvious AI phrases.
+- Avoid excessive hashtags.
+- Use 2-4 relevant hashtags at the end.
+
+ENGAGEMENT:
+
+Make the reader want to comment.
+
+Examples of good endings:
+
+"Are you watching this setup or ignoring it? 👀"
+
+"Would you buy this dip or wait for confirmation?"
+
+"Who is bullish here? 👇"
+
+"What's your take?"
+
+Do NOT copy these examples every time. Create varied endings.
+
+LENGTH:
+
+Write approximately 500-900 characters.
+Do not make it unnecessarily long.
+
+OUTPUT:
+
+Return ONLY the final Binance Square post.
+No quotation marks.
+No explanation.
+No title such as "Here is your post".
+EOF
+)
+
+          echo "🤖 Asking Gemini..."
+
+          RESPONSE=""
+
+          for attempt in 1 2 3; do
+            echo "Gemini attempt $attempt..."
+
+            HTTP_CODE=$(curl -sS -o /tmp/gemini_response.json \
+              -w "%{http_code}" \
+              -X POST \
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${GEMINI_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$(python3 - <<PY
+import json
+
+prompt = '''${PROMPT}'''
+
+payload = {
+    "contents": [
+        {
+            "parts": [
+                {
+                    "text": prompt
                 }
+            ]
+        }
+    ],
+    "generationConfig": {
+        "temperature": 0.95,
+        "topP": 0.95,
+        "maxOutputTokens": 1000
+    }
+}
 
-                lastError = new Error(
-                  `Gemini HTTP ${response.status}: ${JSON.stringify(data)}`
-                );
+print(json.dumps(payload))
+PY
+)")
 
-                if (response.status < 500 && response.status !== 429) {
-                  throw lastError;
-                }
-              } catch (error) {
-                lastError = error;
-              }
+            echo "Gemini HTTP: $HTTP_CODE"
 
-              console.log(`Gemini attempt ${attempt} failed. Retrying...`);
-              await new Promise(resolve =>
-                setTimeout(resolve, attempt * 3000)
-              );
-            }
+            if [ "$HTTP_CODE" = "200" ]; then
+              RESPONSE=$(python3 - <<'PY'
+import json
 
-            throw lastError;
-          }
+with open("/tmp/gemini_response.json", "r") as f:
+    data = json.load(f)
 
-          async function publishToBinance(post) {
-            const url =
-              "https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add";
+try:
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    print(text.strip())
+except Exception:
+    print("")
+PY
+)
 
-            let lastError;
+              if [ -n "$RESPONSE" ]; then
+                break
+              fi
+            fi
 
-            for (let attempt = 1; attempt <= 3; attempt++) {
-              try {
-                const response = await fetch(url, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "clienttype": "binanceSkill",
-                    "X-Square-OpenAPI-Key": binanceKey
-                  },
-                  body: JSON.stringify({
-                    bodyTextOnly: post
-                  })
-                });
+            sleep 5
+          done
 
-                const data = await response.json();
+          if [ -z "$RESPONSE" ]; then
+            echo "❌ Gemini failed"
+            cat /tmp/gemini_response.json
+            exit 1
+          fi
 
-                if (response.ok && data?.code === "000000") {
-                  return data;
-                }
+          # Remove accidental markdown code fences
+          RESPONSE=$(printf '%s' "$RESPONSE" | sed \
+            -e 's/^```text//' \
+            -e 's/^```//' \
+            -e 's/```$//' \
+            | sed '/^[[:space:]]*$/d')
 
-                lastError = new Error(
-                  `Binance API error HTTP ${response.status}: ${JSON.stringify(data)}`
-                );
+          echo "----------------------------------------"
+          echo "GENERATED POST:"
+          echo "$RESPONSE"
+          echo "----------------------------------------"
 
-                if (response.status < 500 && response.status !== 429) {
-                  throw lastError;
-                }
-              } catch (error) {
-                lastError = error;
-              }
+          # --------------------------------------------------
+          # Basic quality checks
+          # --------------------------------------------------
 
-              console.log(`Binance attempt ${attempt} failed. Retrying...`);
-              await new Promise(resolve =>
-                setTimeout(resolve, attempt * 3000)
-              );
-            }
+          CASHTAGS=$(printf '%s' "$RESPONSE" | grep -oE '\$[A-Za-z0-9]{2,15}' | sort -u | wc -l)
 
-            throw lastError;
-          }
+          echo "Cashtags detected: $CASHTAGS"
 
-          console.log("Generating Binance Square post...");
+          if [ "$CASHTAGS" -lt 1 ]; then
+            echo "❌ No cashtag found. Post rejected."
+            exit 1
+          fi
 
-          const post = await generatePost();
+          if [ "$CASHTAGS" -gt 3 ]; then
+            echo "❌ More than 3 cashtags detected. Post rejected."
+            exit 1
+          fi
 
-          console.log("Generated post:");
-          console.log(post);
+          # --------------------------------------------------
+          # Publish to Binance Square
+          # --------------------------------------------------
 
-          console.log("Publishing to Binance Square...");
+          echo "📤 Publishing to Binance Square..."
 
-          const binanceData = await publishToBinance(post);
+          PUBLISH_PAYLOAD=$(python3 - <<PY
+import json
 
-          const id = binanceData?.data?.id;
+post = '''${RESPONSE}'''
 
-          console.log("SUCCESS: Binance Square post published.");
+print(json.dumps({
+    "bodyTextOnly": post
+}))
+PY
+)
 
-          if (id) {
-            console.log(`Post ID: ${id}`);
-            console.log(
-              `Post URL: https://www.binance.com/square/post/${id}`
-            );
-          }
-          EOF
+          SUCCESS=0
 
-          node /tmp/post.mjs
+          for attempt in 1 2 3; do
+            echo "Binance publish attempt $attempt..."
+
+            HTTP_CODE=$(curl -sS -o /tmp/binance_response.json \
+              -w "%{http_code}" \
+              -X POST \
+              "https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add" \
+              -H "Content-Type: application/json" \
+              -H "clienttype: binanceSkill" \
+              -H "X-Square-OpenAPI-Key: ${BINANCE_SQUARE_OPENAPI_KEY}" \
+              -d "$PUBLISH_PAYLOAD")
+
+            echo "Binance HTTP: $HTTP_CODE"
+
+            cat /tmp/binance_response.json
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              SUCCESS=1
+              break
+            fi
+
+            sleep 5
+          done
+
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo "❌ Binance Square publishing failed."
+            exit 1
+          fi
+
+          echo ""
+          echo "========================================"
+          echo "✅ BINANCE SQUARE POST PUBLISHED!"
+          echo "🎯 Token: $PRIMARY_TOKEN"
+          echo "📝 Style: $STYLE"
+          echo "========================================"
